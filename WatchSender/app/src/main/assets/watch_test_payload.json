@@ -1,0 +1,6 @@
+{
+  "tipo": "teste",
+  "origem": "relogio",
+  "mensagem": "Ola! JSON enviado do arquivo do relogio.",
+  "versao": 1
+}
