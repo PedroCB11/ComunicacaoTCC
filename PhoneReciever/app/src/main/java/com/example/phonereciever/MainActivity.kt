@@ -5,18 +5,28 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var textView: TextView
+    private val handler = Handler(Looper.getMainLooper())
+    private val connectionStatusUpdater = object : Runnable {
+        override fun run() {
+            updateMessageText(loadLastMessage(), loadReceivedCount(), loadLastReceivedAt())
+            handler.postDelayed(this, CONNECTION_CHECK_INTERVAL_MS)
+        }
+    }
 
     private val messageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val receivedText = intent?.getStringExtra(PhoneMessageListenerService.EXTRA_MESSAGE_TEXT)
             val receivedCount = intent?.getIntExtra(PhoneMessageListenerService.EXTRA_RECEIVED_COUNT, 0) ?: 0
-            updateMessageText(receivedText, receivedCount)
+            val lastReceivedAt = intent?.getLongExtra(PhoneMessageListenerService.EXTRA_LAST_RECEIVED_AT, 0L) ?: 0L
+            updateMessageText(receivedText, receivedCount, lastReceivedAt)
         }
     }
 
@@ -30,7 +40,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContentView(textView)
-        updateMessageText(loadLastMessage(), loadReceivedCount())
+        updateMessageText(loadLastMessage(), loadReceivedCount(), loadLastReceivedAt())
     }
 
     override fun onResume() {
@@ -42,12 +52,14 @@ class MainActivity : ComponentActivity() {
             RECEIVER_NOT_EXPORTED
         )
 
-        updateMessageText(loadLastMessage(), loadReceivedCount())
+        updateMessageText(loadLastMessage(), loadReceivedCount(), loadLastReceivedAt())
+        handler.post(connectionStatusUpdater)
     }
 
     override fun onPause() {
         super.onPause()
         unregisterReceiver(messageReceiver)
+        handler.removeCallbacks(connectionStatusUpdater)
     }
 
     private fun loadLastMessage(): String? {
@@ -60,11 +72,27 @@ class MainActivity : ComponentActivity() {
             .getInt(PhoneMessageListenerService.PREF_RECEIVED_COUNT, 0)
     }
 
-    private fun updateMessageText(receivedText: String?, receivedCount: Int) {
-        textView.text = if (receivedText.isNullOrBlank()) {
-            "Aguardando JSON do relogio...\n\nRecebimentos: $receivedCount"
-        } else {
-            "Recebimentos: $receivedCount\n\nUltimo JSON recebido do relogio:\n$receivedText"
+    private fun loadLastReceivedAt(): Long {
+        return getSharedPreferences(PhoneMessageListenerService.PREFS_NAME, MODE_PRIVATE)
+            .getLong(PhoneMessageListenerService.PREF_LAST_RECEIVED_AT, 0L)
+    }
+
+    private fun updateMessageText(receivedText: String?, receivedCount: Int, lastReceivedAt: Long) {
+        val connectionStatus = when {
+            lastReceivedAt == 0L -> "Aguardando conexao com o relogio"
+            System.currentTimeMillis() - lastReceivedAt <= CONNECTION_TIMEOUT_MS -> "Conectado ao relogio"
+            else -> "Perda de conexao com o relogio"
         }
+
+        textView.text = if (receivedText.isNullOrBlank()) {
+            "Status de conexao: $connectionStatus\n\nRecebimentos: $receivedCount\n\nSem telemetria recebida ainda."
+        } else {
+            "Status de conexao: $connectionStatus\n\nRecebimentos: $receivedCount\n\nProgresso da telemetria:\n$receivedText"
+        }
+    }
+
+    companion object {
+        private const val CONNECTION_TIMEOUT_MS = 15_000L
+        private const val CONNECTION_CHECK_INTERVAL_MS = 2_000L
     }
 }
